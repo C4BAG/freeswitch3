@@ -1210,10 +1210,10 @@ void sofia_update_callee_id(switch_core_session_t *session, sofia_profile_t *pro
 	switch_channel_t *channel = switch_core_session_get_channel(session);
 	sip_p_asserted_identity_t *passerted = NULL;
 	sip_p_preferred_identity_t* ppreferred = NULL;
-	char *name = NULL;
-	const char *number, *tmp;
+	const char *name = NULL;
+	const char *number = NULL, *tmp;
 	switch_caller_profile_t *caller_profile;
-	char *dup = NULL;
+	char *dup = NULL, *name_dup = NULL, *number_dup = NULL;
 	switch_event_t *event;
 	const char *val;
 	int fs = 0, lazy = 0, att = 0;
@@ -1231,13 +1231,6 @@ void sofia_update_callee_id(switch_core_session_t *session, sofia_profile_t *pro
 	}
 
 
-	number = (char *) switch_channel_get_variable(channel, num_var);
-	name = (char *) switch_channel_get_variable(channel, name_var);
-
-	if (zstr(number) && sip->sip_to) {
-		number = sip->sip_to->a_url->url_user;
-	}
-
 	if (switch_channel_var_true(channel, "sip_ignore_remote_cid")) {
 		fs++;
 	} else {
@@ -1247,7 +1240,7 @@ void sofia_update_callee_id(switch_core_session_t *session, sofia_profile_t *pro
 		}
 
 		if ((val = sofia_glue_get_unknown_header(sip, "X-FS-Display-Name"))) {
-			name = (char *) val;
+			name = val;
 			check_decode(name, session);
 			fs++;
 		}
@@ -1265,6 +1258,7 @@ void sofia_update_callee_id(switch_core_session_t *session, sofia_profile_t *pro
 
 	if (!fs) {
 		sip_remote_party_id_t *rpid;
+
 		if ((passerted = sip_p_asserted_identity(sip))) {
 			if (passerted->paid_url->url_user) {
 				number = passerted->paid_url->url_user;
@@ -1277,8 +1271,8 @@ void sofia_update_callee_id(switch_core_session_t *session, sofia_profile_t *pro
 				} else {
 					name = dup;
 				}
-				if (end_of(name) == '"') {
-					end_of(name) = '\0';
+				if (end_of(dup) == '"') {
+					end_of(dup) = '\0';
 				}
 			}
 		} else if ((rpid = sip_remote_party_id(sip))) {
@@ -1293,8 +1287,8 @@ void sofia_update_callee_id(switch_core_session_t *session, sofia_profile_t *pro
 				} else {
 					name = dup;
 				}
-				if (end_of(name) == '"') {
-					end_of(name) = '\0';
+				if (end_of(dup) == '"') {
+					end_of(dup) = '\0';
 				}
 			}
 		} else if ((ppreferred = sip_p_preferred_identity(sip))) {
@@ -1309,8 +1303,8 @@ void sofia_update_callee_id(switch_core_session_t *session, sofia_profile_t *pro
 				} else {
 					name = dup;
 				}
-				if (end_of(name) == '"') {
-					end_of(name) = '\0';
+				if (end_of(dup) == '"') {
+					end_of(dup) = '\0';
 				}
 			}
 		}
@@ -1319,7 +1313,12 @@ void sofia_update_callee_id(switch_core_session_t *session, sofia_profile_t *pro
 
 	if (zstr(number)) {
 		if ((tmp = switch_channel_get_variable(channel, num_var)) && !zstr(tmp)) {
-			number = (char *) tmp;
+			number = tmp;
+		}
+
+		/* The To user ranks below the channel variable, so it is only consulted once that misses. */
+		if (zstr(number) && sip->sip_to) {
+			number = sip->sip_to->a_url->url_user;
 		}
 
 		if (zstr(number)) {
@@ -1329,12 +1328,12 @@ void sofia_update_callee_id(switch_core_session_t *session, sofia_profile_t *pro
 
 	if (zstr(name)) {
 		if ((tmp = switch_channel_get_variable(channel, name_var)) && !zstr(tmp)) {
-			name = (char *) tmp;
+			name = tmp;
 		}
 	}
 
 	if (zstr(name)) {
-		name = (char *) number;
+		name = number;
 	}
 
 	if (zstr(name) || zstr(number)) {
@@ -1343,14 +1342,23 @@ void sofia_update_callee_id(switch_core_session_t *session, sofia_profile_t *pro
 
 	caller_profile = switch_channel_get_caller_profile(channel);
 
+	/* Sanitized before the comparisons, not at the stores: the fields hold sanitized values, so a
+	   raw candidate never matches. Scratch is heap so an unchanged update costs the session
+	   nothing, and the originals are freed since sanitizing returns a pointer into them. */
+	name_dup = strdup(name);
+	number_dup = strdup(number);
+	switch_assert(name_dup && number_dup);
+	name = switch_sanitize_number(name_dup);
+	number = switch_sanitize_number(number_dup);
+
 	if (switch_channel_inbound_display(channel)) {
 
 		if (!strcmp(caller_profile->caller_id_name, name) && !strcmp(caller_profile->caller_id_number, number)) {
 			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG1, "%s Same Caller ID \"%s\" <%s>\n", switch_channel_get_name(channel), name, number);
 			send = 0;
 		} else {
-			caller_profile->caller_id_name = switch_sanitize_number(switch_core_strdup(caller_profile->pool, name));
-			caller_profile->caller_id_number = switch_sanitize_number(switch_core_strdup(caller_profile->pool, number));
+			caller_profile->caller_id_name = switch_core_strdup(caller_profile->pool, name);
+			caller_profile->caller_id_number = switch_core_strdup(caller_profile->pool, number);
 			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO, "%s Update Caller ID to \"%s\" <%s>\n", switch_channel_get_name(channel), name, number);
 		}
 
@@ -1360,8 +1368,8 @@ void sofia_update_callee_id(switch_core_session_t *session, sofia_profile_t *pro
 			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG1, "%s Same Callee ID \"%s\" <%s>\n", switch_channel_get_name(channel), name, number);
 			send = 0;
 		} else {
-			caller_profile->callee_id_name = switch_sanitize_number(switch_core_strdup(caller_profile->pool, name));
-			caller_profile->callee_id_number = switch_sanitize_number(switch_core_strdup(caller_profile->pool, number));
+			caller_profile->callee_id_name = switch_core_strdup(caller_profile->pool, name);
+			caller_profile->callee_id_number = switch_core_strdup(caller_profile->pool, number);
 			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO, "%s Update Callee ID to \"%s\" <%s>\n", switch_channel_get_name(channel), name, number);
 
 			if (lazy || (att && !switch_channel_get_partner_uuid(channel))) {
@@ -1387,6 +1395,8 @@ void sofia_update_callee_id(switch_core_session_t *session, sofia_profile_t *pro
 
   end:
 	switch_safe_free(dup);
+	switch_safe_free(name_dup);
+	switch_safe_free(number_dup);
 }
 
 static void tech_send_ack(nua_handle_t *nh, private_object_t *tech_pvt, const char *r_sdp)
