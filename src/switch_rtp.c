@@ -10324,9 +10324,9 @@ static int rtp_common_write(switch_rtp_t *rtp_session,
 	}
 
 	if (send) {
-		note_timeline_age(rtp_session, this_ts, send_msg->header.pt);
-
 		int delta = 1;
+
+		note_timeline_age(rtp_session, this_ts, send_msg->header.pt);
 
 		if (rtp_session->flags[SWITCH_RTP_FLAG_VIDEO] && (*flags & SFF_EXTERNAL) && 
 			rtp_session->stats.outbound.packet_count && rtp_session->flags[SWITCH_RTP_FLAG_PASSTHRU]) {
